@@ -1,0 +1,19 @@
+{
+    "name": "user/internet-parus",
+    "autoload": {
+        "psr-4": {
+            "App\\": "App/"
+        },
+        "files": []
+    },
+    "authors": [
+        {
+            "name": "neox56",
+            "email": "neox56@gmail.com"
+        }
+    ],
+    "require": {
+        "imangazaliev/didom": "^2.0",
+        "guzzlehttp/guzzle": "^7.8"
+    }
+}
