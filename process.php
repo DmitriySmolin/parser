@@ -5,22 +5,102 @@ use GuzzleHttp\Client;
 
 
 // Получение данных из формы
-$tradeNumber = $_POST['tradeNumber'];
-$lotNumber = $_POST['lotNumber'];
+$tradeNumber = $_POST['tradeNumber'] ?? '41114-ОАОФ';
+$lotNumber = $_POST['lotNumber'] ?? '1';
 
 $url = "https://nistp.ru/?trade_number=" . $tradeNumber . "&lot_number=" . $lotNumber;
 
 $client = $client = new Client([
     'verify' => false, 
 ]);
+
 $resp = $client->get($url);
 $html = $resp->getBody()->getContents();
 // print_r($html);
+
 $document = new Document();
 $document->loadHtml($html);
-$table = $document->find('.data');
+
+$table = $document->first('table.data');
+$rows = $table->find('tr');
+$link = $document->find('table.data tbody tr td a')[0]->getAttribute('href');
+$data = [];
+
+foreach ($rows as $row) {
+    $rowData = [];
+    $cells = $row->find('td');
+    foreach ($cells as $cell) {
+        $rowData[] = $cell->text();
+    }
+    $data[] = $rowData;
+}
+
 echo '<pre>';
-print_r($table);
+// print_r($link);
+echo '</pre>';
+
+$resp2 = $client->get($link);
+$html2 = $resp2->getBody()->getContents();
+$document2 = new Document();
+$document2->loadHtml($html2);
+// print_r($html2);
+
+$rows = $document2->find('.node_view tr');
+$result = [];
+$result['link'] = $link;
+
+$tables = $document2->find('table.node_view');
+
+foreach ($tables as $table) {
+
+    $headers = $table->find('th');
+    echo '<pre>';
+    echo '</pre>';
+
+     $header = !empty($headers) ? $headers[0]->text() : '';
+
+        if ($header == 'Информация о должнике') {
+            $rows = $table->find('tr');
+
+            foreach ($rows as $row) {
+                $label = $row->find('td.label', 0);
+
+                if ($label) {
+                    $labelText = $label->text();
+
+                    if ($labelText === 'ИНН') {
+                        $innElement = $row->find('td', 1);
+
+                        if ($innElement) {
+                            $inn = $innElement->text();
+                            echo "ИНН должника: $inn";
+                            break; // Прерываем цикл после того, как найдем ИНН
+                        }
+                    }
+                }
+            }
+        }
+}
+
+die;
+
+
+foreach ($rows as $row) {
+    $cells = $row->find('td');
+
+    if (count($cells) >= 2) {
+        $label = $cells[0]->text();
+        $value = $cells[1]->text();
+
+      if ($label === 'Cведения об имуществе (предприятии) должника, выставляемом на торги, его составе, характеристиках, описание' || $label === 'Начальная цена' || $label === 'E-mail' || $label === 'Телефон') {
+        $result[$label] = $value;
+      }
+        
+    }
+}
+
+echo '<pre>';
+// print_r($result);
 echo '</pre>';
 die;
 
