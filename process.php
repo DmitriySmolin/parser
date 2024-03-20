@@ -49,41 +49,6 @@ $rows = $document2->find('.node_view tr');
 $result = [];
 $result['link'] = $link;
 
-$tables = $document2->find('table.node_view');
-
-foreach ($tables as $table) {
-
-    $headers = $table->find('th');
-    echo '<pre>';
-    echo '</pre>';
-
-     $header = !empty($headers) ? $headers[0]->text() : '';
-
-        if ($header == 'Информация о должнике') {
-            $rows = $table->find('tr');
-
-            foreach ($rows as $row) {
-                $label = $row->find('td.label', 0);
-
-                if ($label) {
-                    $labelText = $label->text();
-
-                    if ($labelText === 'ИНН') {
-                        $innElement = $row->find('td', 1);
-
-                        if ($innElement) {
-                            $inn = $innElement->text();
-                            echo "ИНН должника: $inn";
-                            break; // Прерываем цикл после того, как найдем ИНН
-                        }
-                    }
-                }
-            }
-        }
-}
-
-die;
-
 
 foreach ($rows as $row) {
     $cells = $row->find('td');
@@ -92,15 +57,46 @@ foreach ($rows as $row) {
         $label = $cells[0]->text();
         $value = $cells[1]->text();
 
-      if ($label === 'Cведения об имуществе (предприятии) должника, выставляемом на торги, его составе, характеристиках, описание' || $label === 'Начальная цена' || $label === 'E-mail' || $label === 'Телефон') {
+      if ($label === 'Cведения об имуществе (предприятии) должника, выставляемом на торги, его составе, характеристиках, описание' || $label === 'Начальная цена' || $label === 'E-mail' || $label === 'Телефон' || $label === 'Номер дела о банкротстве' || $label === 'Дата проведения') {
         $result[$label] = $value;
       }
         
     }
 }
 
+$tables = $document2->find('table.node_view');
+
+foreach ($tables as $table) {
+
+    $headers = $table->find('th');
+
+     $header = !empty($headers) ? $headers[0]->text() : '';
+
+        if (trim($header) === 'Информация о должнике') {
+
+            $rows = $table->find('tr');
+          foreach ($rows as $row) {
+          $label = $row->find('td.label');
+
+          if (!empty($label)) {
+              $labelText = $label[0]->text();
+
+              if ($labelText === 'ИНН') {
+                $innElements = $row->find('td');
+
+                if (count($innElements) > 1) {
+                    $inn = $innElements[1]->text();
+                    $result['inn'] = $inn;;
+                    break; // Прерываем цикл после того, как найдем ИНН
+                }
+              }
+          }
+        }
+        }
+}
+
 echo '<pre>';
-// print_r($result);
+print_r($result);
 echo '</pre>';
 die;
 
