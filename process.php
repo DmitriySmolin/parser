@@ -4,96 +4,120 @@ use DiDom\Document;
 use GuzzleHttp\Client;
 
 
-// Получение данных из формы
-$tradeNumber = $_POST['tradeNumber'] ?? '41114-ОАОФ';
-$lotNumber = $_POST['lotNumber'] ?? '1';
+class DataProcessor {
+    private $client;
+    private $data;
 
-$url = "https://nistp.ru/?trade_number=" . $tradeNumber . "&lot_number=" . $lotNumber;
-
-$client = $client = new Client([
-    'verify' => false, 
-]);
-
-$resp = $client->get($url);
-$html = $resp->getBody()->getContents();
-// print_r($html);
-
-$document = new Document();
-$document->loadHtml($html);
-
-$table = $document->first('table.data');
-$rows = $table->find('tr');
-$link = $document->find('table.data tbody tr td a')[0]->getAttribute('href');
-$data = [];
-
-foreach ($rows as $row) {
-    $rowData = [];
-    $cells = $row->find('td');
-    foreach ($cells as $cell) {
-        $rowData[] = $cell->text();
+    public function __construct(Client $client) {
+        $this->client = $client;
+        $this->data = new stdClass();
     }
-    $data[] = $rowData;
-}
 
-echo '<pre>';
-// print_r($link);
-echo '</pre>';
+    public function processFormData($tradeNumber, $lotNumber) {
+        $url = "https://nistp.ru/?trade_number=$tradeNumber&lot_number=$lotNumber";
 
-$resp2 = $client->get($link);
-$html2 = $resp2->getBody()->getContents();
-$document2 = new Document();
-$document2->loadHtml($html2);
-// print_r($html2);
+        $pageTradeList = $this->getDocumentFromUrl($url);
+        $baknrotHref = $this->getLinkBankrot($pageTradeList);
+     
+        $pageTradeView = $this->getDocumentFromUrl($baknrotHref);
 
-$rows = $document2->find('.node_view tr');
-$result = [];
-$result['link'] = $link;
+        $this->processContactPersontData($pageTradeView->find('.node_view tr'));
+        $this->processLotData($pageTradeView->find("table#table_lot_$lotNumber tr"));
+        $this->processBankrotData($pageTradeView->find('table.node_view'));
 
-
-foreach ($rows as $row) {
-    $cells = $row->find('td');
-
-    if (count($cells) >= 2) {
-        $label = $cells[0]->text();
-        $value = $cells[1]->text();
-
-      if ($label === 'Cведения об имуществе (предприятии) должника, выставляемом на торги, его составе, характеристиках, описание' || $label === 'Начальная цена' || $label === 'E-mail' || $label === 'Телефон' || $label === 'Номер дела о банкротстве' || $label === 'Дата проведения') {
-        $result[$label] = $value;
-      }
-        
+        return $this->data;
     }
-}
 
-$tables = $document2->find('table.node_view');
+    private function getLinkBankrot($document) {
+        $link = $document->find('table.data tbody tr td a')[0]->attr('href');
+        $this->data->href = $link;
+        return $link;
+    }
 
-foreach ($tables as $table) {
+    private function getDocumentFromUrl($url) {
+        $response = $this->client->get($url);
+        $html = $response->getBody()->getContents();
+        $document = new Document();
+        $document->loadHtml($html);
+        return $document;
+    }
 
-    $headers = $table->find('th');
+    private function processContactPersontData($rows) {
+        $labelMappings = [
+            'E-mail' => 'email',
+            'Телефон' => 'phone',
+            'Номер дела о банкротстве' => 'bankruptcy_case_number',
+            'Дата проведения' => 'date_auction',
+        ];
 
-     $header = !empty($headers) ? $headers[0]->text() : '';
+        $this->processData($rows, $labelMappings);
+    }
 
-        if (trim($header) === 'Информация о должнике') {
+    private function processLotData($rows) {
+        $labelMappings = [
+            'Cведения об имуществе (предприятии) должника, выставляемом на торги, его составе, характеристиках, описание' => 'debtor_property_information',
+            'Начальная цена' => 'start_price',
+        ];
 
-            $rows = $table->find('tr');
-          foreach ($rows as $row) {
-          $label = $row->find('td.label');
+        $this->processData($rows, $labelMappings);
+    }
 
-          if (!empty($label)) {
-              $labelText = $label[0]->text();
+    private function processData($rows, $labelMappings) {
+        foreach ($rows as $row) {
+            $cells = $row->find('td');
 
-              if ($labelText === 'ИНН') {
-                $innElements = $row->find('td');
+            if (count($cells) >= 2) {
+                $label = $cells[0]->text();
+                $value = $cells[1]->text();
 
-                if (count($innElements) > 1) {
-                    $inn = $innElements[1]->text();
-                    $result['inn'] = $inn;;
-                    break; // Прерываем цикл после того, как найдем ИНН
+                if (isset($labelMappings[$label])) {
+                    $mappedKey = $labelMappings[$label];
+                    $this->data->$mappedKey = $value;
                 }
-              }
-          }
+            }
         }
+    }
+
+    private function processBankrotData($tables) {
+        foreach ($tables as $table) {
+            $headers = $table->find('th');
+            $header = !empty($headers) ? $headers->first()->text() : '';
+    
+            if (trim($header) !== 'Информация о должнике') {
+                continue;
+            }
+    
+            $this->processDebtorITN($table->find('tr'));
+            break; // Прерываем цикл после обработки информации о должнике
         }
+    }
+    
+    private function processDebtorITN($rows) {
+        foreach ($rows as $row) {
+            $label = $row->find('td.label')->first();
+    
+            if ($label && $label->text() === 'ИНН') {
+                $itnElements = $row->find('td');
+    
+                if ($itnElements->count() > 1) {
+                    $this->data->debtor_ITN = $itnElements->eq(1)->text();
+                    return; // Выходим из метода после обработки ИНН
+                }
+            }
+        }
+    }
 }
+
+// Инициализация объекта DataProcessor
+$client = new Client(['verify' => false]);
+$dataProcessor = new DataProcessor($client);
+
+// Получение данных из формы
+$tradeNumber = $_POST['tradeNumber'];
+$lotNumber = $_POST['lotNumber'];
+
+// Обработка данных и вывод результатов
+$result = $dataProcessor->processFormData($tradeNumber, $lotNumber);
 
 echo '<pre>';
 print_r($result);
