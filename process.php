@@ -7,32 +7,53 @@ use GuzzleHttp\Client;
 class DataProcessor {
     private $client;
     private $data;
-
+    public $db; // Явное объявление свойства
     public function __construct(Client $client) {
         $this->client = $client;
         $this->data = new stdClass();
+      $this->db = new SQLite3('lots.sqlite'); // Подключение к базе данных SQLite
+      $this->createLotsTable(); // Создание таблицы lots, если она не существует
     }
 
     public function processFormData($tradeNumber, $lotNumber) {
         $url = "https://nistp.ru/?trade_number=$tradeNumber&lot_number=$lotNumber";
-
+        
         $pageTradeList = $this->getDocumentFromUrl($url);
-        $baknrotHref = $this->getLinkBankrot($pageTradeList);
-     
+
+        $baknrotHref= $this->getLinkBankrot($pageTradeList);
+
+        // if(!$this->isLotNotFound($baknrotHref)) {
+        //   return false;
+        // }
+        
+ 
         $pageTradeView = $this->getDocumentFromUrl($baknrotHref);
 
         $this->processContactPersontData($pageTradeView->find('.node_view tr'));
         $this->processLotData($pageTradeView->find("table#table_lot_$lotNumber tr"));
         $this->processBankrotData($pageTradeView->find('table.node_view'));
-
+        $this->insertLot(); // Вставка данных в базу
         return $this->data;
     }
 
-    private function getLinkBankrot($document) {
-        $link = $document->find('table.data tbody tr td a')[0]->attr('href');
-        $this->data->href = $link;
-        return $link;
+    private function isLotNotFound($href) {
+    if(!$href) {
+      echo "Лот не найден";
+      return false;
     }
+  }
+
+  private function getLinkBankrot($document) {
+      $links = $document->find('table.data tbody tr td a');
+      if (!empty($links)) {
+          $link = $links[0]->attr('href');
+          if ($link) {
+             $this->data->href = $link;
+              return $link;
+          }
+      }
+      return false;
+  }
 
     private function getDocumentFromUrl($url) {
         $response = $this->client->get($url);
@@ -81,142 +102,96 @@ class DataProcessor {
     private function processBankrotData($tables) {
         foreach ($tables as $table) {
             $headers = $table->find('th');
-            $header = !empty($headers) ? $headers->first()->text() : '';
+            $header = !empty($headers) ? $headers[0]->text() : '';
     
             if (trim($header) !== 'Информация о должнике') {
                 continue;
             }
     
             $this->processDebtorITN($table->find('tr'));
-            break; // Прерываем цикл после обработки информации о должнике
+            break; 
         }
     }
     
-    private function processDebtorITN($rows) {
-        foreach ($rows as $row) {
-            $label = $row->find('td.label')->first();
-    
-            if ($label && $label->text() === 'ИНН') {
-                $itnElements = $row->find('td');
-    
-                if ($itnElements->count() > 1) {
-                    $this->data->debtor_ITN = $itnElements->eq(1)->text();
-                    return; // Выходим из метода после обработки ИНН
-                }
-            }
-        }
-    }
-}
+  private function processDebtorITN($rows) {
+      foreach ($rows as $row) {
+          $label = $row->find('td.label');
+
+          if (!empty($label) && isset($label[0]) && $label[0]->text() === 'ИНН') {
+              $itnElements = $row->find('td');
+
+              if (!empty($itnElements) && isset($itnElements[1])) {
+                  $this->data->debtor_ITN = $itnElements[1]->text();
+                  return;
+              }
+          }
+      }
+  }
+
+  private function insertLot() {
+          $query = "INSERT OR REPLACE INTO lots (trade_number, email, phone, bankruptcy_case_number, debtor_property_information, start_price, debtor_ITN)
+              VALUES (:trade_number, :email, :phone, :bankruptcy_case_number, :debtor_property_information, :start_price, :debtor_ITN)";
+
+          $stmt = $this->db->prepare($query);
+          $stmt->bindValue(':trade_number', $this->data->trade_number);
+          $stmt->bindValue(':email', $this->data->email);
+          $stmt->bindValue(':phone', $this->data->phone);
+          $stmt->bindValue(':bankruptcy_case_number', $this->data->bankruptcy_case_number);
+          $stmt->bindValue(':debtor_property_information', $this->data->debtor_property_information);
+          $stmt->bindValue(':start_price', $this->data->start_price);
+          $stmt->bindValue(':debtor_ITN', $this->data->debtor_ITN);
+
+          $stmt->execute();
+      }
+
+      private function createLotsTable() {
+          $query = "CREATE TABLE IF NOT EXISTS lots (
+              trade_number TEXT PRIMARY KEY,
+              email TEXT,
+              phone TEXT,
+              bankruptcy_case_number TEXT,
+              debtor_property_information TEXT,
+              start_price REAL,
+              debtor_ITN TEXT
+          )";
+
+          $this->db->exec($query);
+      }
+  }
 
 // Инициализация объекта DataProcessor
-$client = new Client(['verify' => false]);
-$dataProcessor = new DataProcessor($client);
+// $client = new Client(['verify' => false]);
+// $dataProcessor = new DataProcessor($client);
 
 // Получение данных из формы
-$tradeNumber = $_POST['tradeNumber'];
-$lotNumber = $_POST['lotNumber'];
+$tradeNumber = $_POST['tradeNumber'] ?? '31710-ОТПП';
+$lotNumber = $_POST['lotNumber'] ?? 10;
 
-// Обработка данных и вывод результатов
-$result = $dataProcessor->processFormData($tradeNumber, $lotNumber);
+$dataProcessor = new DataProcessor(new Client(['verify' => false])); // Создаем экземпляр класса DataProcessor
+$dataProcessor->processFormData($tradeNumber, $lotNumber);
+$db = $dataProcessor->db;
 
-echo '<pre>';
-print_r($result);
-echo '</pre>';
-die;
-
-// Формирование URL для поиска
+$query = "SELECT * FROM lots";
+$result = $db->query($query);
 
 
-// // // Загрузка страницы поиска
-// $context = stream_context_create([
-//     'ssl' => [
-//         'verify_peer' => false,
-//         'verify_peer_name' => false,
-//     ]
-// ]);
 
-// Инициализируем сеанс cURL
+echo "<table border='1'>";
+echo "<tr><th>Trade Number</th><th>Email</th><th>Phone</th><th>Bankruptcy Case Number</th><th>Debtor Property Information</th><th>Start Price</th><th>Debtor ITN</th></tr>";
 
-// Устанавливаем URL для запроса
-// $url = "https://nistp.ru/?trade_number=" . $tradeNumber . "&lot_number=" . $lotNumber;
-
-// $header = array(
-//     "cache-control: max-age=0",
-//     "upgrade-insecure-requests: 1",
-//     "user-agent: Safari/537.36",
-//     "sec-fetch-user: ?1",
-//     "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-//     "signed-exchange;v=b3",
-//     "x-compress: null",
-//     "sec-fetch-site: none",
-//     "sec-fetch-mode: navigate",
-//     "accept-encoding: deflate, br",
-//     "accept-language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-// );
-
-// $ch = curl_init($url);
-// curl_setopt($ch, CURLOPT_COOKIEFILE, __DIR__ . "/cookie.txt");
-// curl_setopt($ch, CURLOPT_COOKIEJAR, __DIR__ . "/cookie.txt");
-// curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
-// curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-// curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-// curl_setopt($ch, CURLOPT_HEADER, true);
-
-// $html = curl_exec($ch);
-
-// curl_close($ch);
-
-
-// Выводим полученные данные
-// var_dump($html);
-
-
-// Проверка наличия лота
-if (strpos($html, 'Ничего не найдено') !== false) {
-    echo "Лот не найден";
-} else {
-    // Получение информации о лоте с указанного URL
-
-    // Парсинг HTML для получения необходимых данных
-    $dom = new DOMDocument();
-    $dom->loadHTML($html);
-
-    echo $dom->saveHTML();
-die;
-
-    // Получение URL адреса лота
-    $urlAddress = $dom->getElementById('lot-url')->textContent;
-
-    // Получение описания лота
-    $description = $dom->getElementById('lot-description')->textContent;
-
-    // Получение начальной цены лота
-    $initialPrice = $dom->getElementById('initial-price')->textContent;
-
-    // Получение email контактного лица
-    $email = $dom->getElementById('contact-email')->textContent;
-
-    // Получение телефона контактного лица
-    $phone = $dom->getElementById('contact-phone')->textContent;
-
-    // Получение ИНН должника
-    $inn = $dom->getElementById('debtor-inn')->textContent;
-
-    // Получение номера дела о банкротстве
-    $caseNumber = $dom->getElementById('case-number')->textContent;
-
-    // Получение даты торгов (начала/проведения)
-    $auctionDate = $dom->getElementById('auction-date')->textContent;
-
-    // Сохранение информации в базу данных
-
-    // Вывод информации о лоте
-    echo "URL адрес: " . $urlAddress . "<br>";
-    echo "Cведения об имуществе: " . $description . "<br>";
-    echo "Начальная цена лота: " . $initialPrice . "<br>";
-    echo "Email контактного лица: " . $email . "<br>";
-    echo "Телефон контактного лица: " . $phone . "<br>";
-    echo "ИНН должника: " . $inn . "<br>";
-    echo "Номер дела о банкротстве: " . $caseNumber . "<br>";
-    echo "Дата торгов: " . $auctionDate . "<br>";
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+    echo "<tr>";
+    echo "<td>".$row['trade_number']."</td>";
+    echo "<td>".$row['email']."</td>";
+    echo "<td>".$row['phone']."</td>";
+    echo "<td>".$row['bankruptcy_case_number']."</td>";
+    echo "<td>".$row['debtor_property_information']."</td>";
+    echo "<td>".$row['start_price']."</td>";
+    echo "<td>".$row['debtor_ITN']."</td>";
+    echo "</tr>";
 }
+
+echo "</table>";
+
+
+
