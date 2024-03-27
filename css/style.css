@@ -1,0 +1,29 @@
+input {
+    width: 20%;
+}
+
+table {
+    margin-top: 20px;
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #ddd; /* Граница для таблицы */
+}
+
+th, td {
+    padding: 8px;
+    text-align: left;
+    border-bottom: 1px solid #ddd; /* Граница для нижней части ячеек */
+    border-right: 1px solid #ddd; /* Граница для правой части ячеек */
+}
+
+th {
+    background-color: #f2f2f2;
+}
+
+th:last-child, td:last-child {
+    border-right: none; /* Убираем границу справа для последней ячейки в строке */
+}
+
+.phone {
+    white-space: nowrap;
+}
